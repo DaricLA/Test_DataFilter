@@ -86,6 +86,33 @@ def get_config_dir():
             return tempfile.gettempdir()
 
 
+class ToolTip:
+    """简易鼠标悬停提示"""
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+        widget.bind("<Enter>", self.show)
+        widget.bind("<Leave>", self.hide)
+
+    def show(self, event=None):
+        if self.tip_window or not self.text:
+            return
+        x, y = self.widget.winfo_pointerxy()
+        x += 15
+        y += 20
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = ttk.Label(tw, text=self.text, bootstyle="info", padding=5)
+        label.pack()
+
+    def hide(self, event=None):
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
+
+
 class App:
     def __init__(self):
         self.root = ttk.Window(themename="flatly")
@@ -108,8 +135,8 @@ class App:
         self.current_config_name = None
 
         # 数据相关（主界面）
-        self.file_path = None          # 单文件路径
-        self.df = None                 # 当前数据
+        self.file_path = None
+        self.df = None
         self.sheet_names = []
         self.current_sheet = None
         self.header_row = 1
@@ -117,9 +144,12 @@ class App:
         self.selected_indices = []
 
         # 多文件合并相关
-        self.multi_files = []          # 列表，每个元素为 dict: {path, sheet_var, header_var, frame}
+        self.multi_files = []
         self.multi_area_visible = False
         self.multi_area_built = False
+
+        # 配置应用进度条
+        self.progress_bar = None
 
         self.build_ui()
         self.load_configs()
@@ -236,26 +266,50 @@ class App:
         status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
-        # ========== 底部操作按钮 ==========
-        bottom_frame = ttk.Frame(self.root, padding=10)
-        bottom_frame.pack(fill=tk.X, side=tk.BOTTOM)
-        self.btn_export = ttk.Button(bottom_frame, text="开始筛选并输出 Excel", command=self.export_excel,
+        # ========== 底部按钮区域（固定高度，不被压缩） ==========
+        self.bottom_frame = ttk.Frame(self.root, padding=10, height=45)
+        self.bottom_frame.pack_propagate(False)  # 禁止子控件改变高度
+        self.bottom_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        self.btn_export = ttk.Button(self.bottom_frame, text="开始筛选并输出 Excel", command=self.export_excel,
                                      bootstyle="info")
         self.btn_export.pack(side=tk.LEFT, padx=5)
-        ttk.Button(bottom_frame, text="打开输出目录", command=self.open_output_dir).pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.bottom_frame, text="打开输出目录", command=self.open_output_dir).pack(side=tk.LEFT, padx=5)
+
+        # ========== 配置应用进度条（初始隐藏） ==========
+        self.progress_bar = ttk.Progressbar(self.root, mode='indeterminate', bootstyle='info', length=200)
+        # 不立即 pack，需要时动态显示在状态栏上方
 
     def toggle_multi_area(self):
-        """展开/收起多文件合并区域"""
+        """展开/收起多文件合并区域，并动态调整窗口高度"""
         if self.multi_area_visible:
             self.multi_frame.pack_forget()
             self.btn_toggle_multi.config(text="展开多文件合并")
             self.multi_area_visible = False
+            # 减少窗口高度 220px
+            self.change_window_height(-220)
         else:
-            self.multi_frame.pack(fill=tk.X)  # 直接pack，位于按钮下方
+            self.multi_frame.pack(fill=tk.X)
             self.btn_toggle_multi.config(text="收起多文件合并")
             self.multi_area_visible = True
             if not self.multi_area_built:
                 self.build_multi_area()
+            # 增加窗口高度 220px
+            self.change_window_height(220)
+
+    def change_window_height(self, delta):
+        """调整窗口高度，保持宽度不变"""
+        try:
+            self.root.update_idletasks()
+            current_width = self.root.winfo_width()
+            current_height = self.root.winfo_height()
+            new_height = current_height + delta
+            # 确保不低于最小高度
+            min_height = 750
+            if new_height < min_height:
+                new_height = min_height
+            self.root.geometry(f"{current_width}x{new_height}")
+        except Exception as e:
+            print(f"调整窗口高度失败：{e}")
 
     def build_multi_area(self):
         """构建多文件合并区域 UI（首次调用时创建内部控件）"""
@@ -298,30 +352,35 @@ class App:
             self.add_multi_file_entry(path)
 
     def add_multi_file_entry(self, path):
-        """在合并区域添加一个文件条目"""
+        """在合并区域添加一个文件条目，文件名靠左，控件靠右"""
         if not self.multi_area_built:
             self.build_multi_area()
         frame = ttk.Frame(self.multi_files_frame)
         frame.pack(fill=tk.X, padx=5, pady=2)
 
-        # 文件名标签
-        label = ttk.Label(frame, text=os.path.basename(path), width=30, anchor='w')
-        label.pack(side=tk.LEFT)
+        # 使用 grid 布局，文件名列可扩展
+        frame.columnconfigure(0, weight=1)
+        # 文件名标签（显示 basename，完整文件名用于 tooltip）
+        full_name = os.path.basename(path)
+        label = ttk.Label(frame, text=full_name, anchor='w')
+        label.grid(row=0, column=0, sticky='ew', padx=5)
+        # 添加 tooltip
+        ToolTip(label, full_name)  # 悬停显示完整文件名
 
         # Sheet 下拉
         sheet_var = tk.StringVar(value="")
         sheet_combo = ttk.Combobox(frame, textvariable=sheet_var, state="readonly", width=15)
-        sheet_combo.pack(side=tk.LEFT, padx=5)
+        sheet_combo.grid(row=0, column=1, padx=5)
 
         # 表头行 Spinbox
         header_var = tk.IntVar(value=1)
         header_spin = ttk.Spinbox(frame, from_=1, to=1000, width=5, textvariable=header_var)
-        header_spin.pack(side=tk.LEFT, padx=5)
+        header_spin.grid(row=0, column=2, padx=5)
 
         # 移除按钮
         remove_btn = ttk.Button(frame, text="移除", bootstyle="outline-danger",
                                 command=lambda: self.remove_multi_file(path))
-        remove_btn.pack(side=tk.LEFT, padx=5)
+        remove_btn.grid(row=0, column=3, padx=5)
 
         # 读取该文件的 sheet 名称
         ext = os.path.splitext(path)[1].lower()
@@ -406,15 +465,22 @@ class App:
                     first_file_name = os.path.basename(path)
                 else:
                     if original_cols != first_original_cols:
-                        # 找出具体差异
+                        # 找出具体差异（最多前3个）
                         diff_details = []
                         max_len = max(len(first_original_cols), len(original_cols))
+                        count = 0
                         for i in range(max_len):
                             col_a = first_original_cols[i] if i < len(first_original_cols) else "<缺失>"
                             col_b = original_cols[i] if i < len(original_cols) else "<缺失>"
                             if col_a != col_b:
                                 diff_details.append(f"第{i+1}列：{first_file_name}为'{col_a}'，{os.path.basename(path)}为'{col_b}'")
-                        raise ValueError("列不一致，具体差异：\n" + "\n".join(diff_details))
+                                count += 1
+                                if count >= 3:
+                                    break
+                        error_msg = "列不一致，具体差异：\n" + "\n".join(diff_details)
+                        if max_len > 3 and count >= 3:
+                            error_msg += "\n（其余差异已省略）"
+                        raise ValueError(error_msg)
                 dataframes.append(df)
             except Exception as e:
                 self.status_var.set("合并失败")
@@ -446,11 +512,11 @@ class App:
         self.entry_output.delete(0, tk.END)
         self.entry_output.insert(0, first_file_dir)
 
-        # 重要：合并后的文件，表头行应重置为 1
+        # 表头行重置为 1
         self.spin_header.set(1)
 
         # 隐藏多文件区域
-        self.toggle_multi_area()  # 收起
+        self.toggle_multi_area()  # 收起，窗口高度恢复
 
         # 加载文件
         self.load_file()
@@ -705,11 +771,15 @@ class App:
         if not self.file_path:
             messagebox.showwarning("提示", "请先导入文件再应用配置")
             return
+        # 显示进度条
+        self.show_progress()
         try:
             # 设置 sheet
             if cfg.get("sheet") in self.sheet_names:
                 self.combo_sheet.set(cfg["sheet"])
                 self.current_sheet = cfg["sheet"]
+            else:
+                messagebox.showwarning("提示", f"配置中的工作表 '{cfg.get('sheet')}' 在当前文件中不存在，将使用当前工作表。")
             # 设置表头行
             self.spin_header.set(cfg.get("header_row", 1))
             # 设置导出路径
@@ -738,6 +808,23 @@ class App:
             self.status_var.set(f"已应用配置：{cfg['name']}")
         except Exception as e:
             messagebox.showerror("错误", f"应用配置失败：{str(e)}")
+        finally:
+            self.hide_progress()
+
+    def show_progress(self):
+        """在状态栏上方显示进度条"""
+        if self.progress_bar is None:
+            return
+        if not self.progress_bar.winfo_manager():
+            self.progress_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=2, before=self.bottom_frame)
+        self.progress_bar.start(10)
+
+    def hide_progress(self):
+        """隐藏进度条"""
+        if self.progress_bar is not None:
+            self.progress_bar.stop()
+            if self.progress_bar.winfo_manager():
+                self.progress_bar.pack_forget()
 
     def save_config(self):
         if not self.file_path:
@@ -837,7 +924,7 @@ class App:
         try:
             selected_columns = [self.columns_info[i][0] for i in self.selected_indices]
             df_out = self.df.iloc[:, selected_columns].copy()
-            # 恢复原始列名（若原始为空，则使用 display）
+            # 恢复原始列名
             original_names = [self.columns_info[i][1] for i in self.selected_indices]
             display_names = [self.columns_info[i][2] for i in self.selected_indices]
             final_names = [orig if orig != "" else disp for orig, disp in zip(original_names, display_names)]
