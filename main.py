@@ -209,13 +209,24 @@ class App:
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
         # ========== 底部按钮区域（固定高度，不被压缩） ==========
-        self.bottom_frame = ttk.Frame(self.root, padding=10, height=45)
+        self.bottom_frame = ttk.Frame(self.root, padding=10, height=55)  # 增加高度到55
         self.bottom_frame.pack_propagate(False)  # 禁止子控件改变高度
         self.bottom_frame.pack(side=tk.BOTTOM, fill=tk.X)
         self.btn_export = ttk.Button(self.bottom_frame, text="开始筛选并输出 Excel", command=self.export_excel,
                                      bootstyle="info")
         self.btn_export.pack(side=tk.LEFT, padx=5)
         ttk.Button(self.bottom_frame, text="打开输出目录", command=self.open_output_dir).pack(side=tk.LEFT, padx=5)
+
+        # ========== 配置管理区域（也放在底部，不被压缩） ==========
+        config_frame = ttk.Frame(self.root, padding=10)
+        config_frame.pack(side=tk.BOTTOM, fill=tk.X)  # 改为BOTTOM
+        ttk.Label(config_frame, text="选择配置：", width=12, anchor='e').pack(side=tk.LEFT)
+        self.combo_config = ttk.Combobox(config_frame, state="readonly", width=25)
+        self.combo_config.pack(side=tk.LEFT, padx=5)
+        self.combo_config.bind("<<ComboboxSelected>>", self.on_config_select)
+        ttk.Button(config_frame, text="保存配置", command=self.save_config).pack(side=tk.LEFT, padx=2)
+        ttk.Button(config_frame, text="另存为", command=self.save_config_as).pack(side=tk.LEFT, padx=2)
+        ttk.Button(config_frame, text="删除配置", command=self.delete_config).pack(side=tk.LEFT, padx=2)
 
         # ========== 配置应用进度条（初始隐藏） ==========
         self.progress_bar = ttk.Progressbar(self.root, mode='indeterminate', bootstyle='info', length=200)
@@ -266,17 +277,6 @@ class App:
         btn_right_frame.pack(side=tk.LEFT, fill=tk.Y)
         ttk.Button(btn_right_frame, text="上移", width=btn_width, command=self.move_up).pack(pady=2)
         ttk.Button(btn_right_frame, text="下移", width=btn_width, command=self.move_down).pack(pady=2)
-
-        # ========== 配置管理区域 ==========
-        config_frame = ttk.Frame(self.root, padding=10)
-        config_frame.pack(fill=tk.X)
-        ttk.Label(config_frame, text="选择配置：", width=12, anchor='e').pack(side=tk.LEFT)
-        self.combo_config = ttk.Combobox(config_frame, state="readonly", width=25)
-        self.combo_config.pack(side=tk.LEFT, padx=5)
-        self.combo_config.bind("<<ComboboxSelected>>", self.on_config_select)
-        ttk.Button(config_frame, text="保存配置", command=self.save_config).pack(side=tk.LEFT, padx=2)
-        ttk.Button(config_frame, text="另存为", command=self.save_config_as).pack(side=tk.LEFT, padx=2)
-        ttk.Button(config_frame, text="删除配置", command=self.delete_config).pack(side=tk.LEFT, padx=2)
 
     def toggle_multi_area(self):
         """展开/收起多文件合并区域，并动态调整窗口高度"""
@@ -335,11 +335,19 @@ class App:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.multi_files_canvas.pack(fill=tk.BOTH, expand=True)
 
+        # 绑定鼠标滚轮事件
+        self.multi_files_canvas.bind("<MouseWheel>", self.on_mousewheel)
+
         self.multi_files_frame = ttk.Frame(self.multi_files_canvas)
         self.multi_files_canvas.create_window((0, 0), window=self.multi_files_frame, anchor='nw')
         self.multi_files_frame.bind("<Configure>", lambda e: self.multi_files_canvas.configure(scrollregion=self.multi_files_canvas.bbox("all")))
 
         self.multi_area_built = True
+
+    def on_mousewheel(self, event):
+        """鼠标滚轮滚动多文件列表"""
+        if self.multi_files_canvas:
+            self.multi_files_canvas.yview_scroll(int(-event.delta/120), "units")
 
     def add_multi_files(self):
         """添加多个文件到合并列表"""
@@ -357,9 +365,9 @@ class App:
         frame = ttk.Frame(self.multi_files_frame)
         frame.pack(fill=tk.X, padx=5, pady=2)
 
-        # 文件名标签（限制宽度，不自动扩展）
+        # 文件名标签（宽度改为51，约原30的1.7倍）
         full_name = os.path.basename(path)
-        label = ttk.Label(frame, text=full_name, width=30, anchor='w')  # width=30 控制显示宽度
+        label = ttk.Label(frame, text=full_name, width=51, anchor='w')
         label.grid(row=0, column=0, sticky='w', padx=5)
         ToolTip(label, full_name)  # 悬停显示完整文件名
 
