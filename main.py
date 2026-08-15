@@ -203,7 +203,24 @@ class App:
         self.entry_search.grid(row=3, column=1, columnspan=2, sticky='ew', padx=5, pady=3)
         self.entry_search.bind("<KeyRelease>", self.filter_left_listbox)
 
-        # ========== 中间列选择区域 ==========
+        # ========== 底部状态栏（先 pack，确保在底部按钮下方） ==========
+        self.status_var = tk.StringVar(value="就绪")
+        status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
+        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # ========== 底部按钮区域（固定高度，不被压缩） ==========
+        self.bottom_frame = ttk.Frame(self.root, padding=10, height=45)
+        self.bottom_frame.pack_propagate(False)  # 禁止子控件改变高度
+        self.bottom_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        self.btn_export = ttk.Button(self.bottom_frame, text="开始筛选并输出 Excel", command=self.export_excel,
+                                     bootstyle="info")
+        self.btn_export.pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.bottom_frame, text="打开输出目录", command=self.open_output_dir).pack(side=tk.LEFT, padx=5)
+
+        # ========== 配置应用进度条（初始隐藏） ==========
+        self.progress_bar = ttk.Progressbar(self.root, mode='indeterminate', bootstyle='info', length=200)
+
+        # ========== 中间列选择区域（必须在底部区域之后 pack，以避免被挤压） ==========
         self.mid_frame = ttk.Frame(self.root, padding=10)
         self.mid_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -260,24 +277,6 @@ class App:
         ttk.Button(config_frame, text="保存配置", command=self.save_config).pack(side=tk.LEFT, padx=2)
         ttk.Button(config_frame, text="另存为", command=self.save_config_as).pack(side=tk.LEFT, padx=2)
         ttk.Button(config_frame, text="删除配置", command=self.delete_config).pack(side=tk.LEFT, padx=2)
-
-        # ========== 状态栏（先 pack，确保在底部按钮下方） ==========
-        self.status_var = tk.StringVar(value="就绪")
-        status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-
-        # ========== 底部按钮区域（固定高度，不被压缩） ==========
-        self.bottom_frame = ttk.Frame(self.root, padding=10, height=45)
-        self.bottom_frame.pack_propagate(False)  # 禁止子控件改变高度
-        self.bottom_frame.pack(side=tk.BOTTOM, fill=tk.X)
-        self.btn_export = ttk.Button(self.bottom_frame, text="开始筛选并输出 Excel", command=self.export_excel,
-                                     bootstyle="info")
-        self.btn_export.pack(side=tk.LEFT, padx=5)
-        ttk.Button(self.bottom_frame, text="打开输出目录", command=self.open_output_dir).pack(side=tk.LEFT, padx=5)
-
-        # ========== 配置应用进度条（初始隐藏） ==========
-        self.progress_bar = ttk.Progressbar(self.root, mode='indeterminate', bootstyle='info', length=200)
-        # 不立即 pack，需要时动态显示在状态栏上方
 
     def toggle_multi_area(self):
         """展开/收起多文件合并区域，并动态调整窗口高度"""
@@ -358,13 +357,10 @@ class App:
         frame = ttk.Frame(self.multi_files_frame)
         frame.pack(fill=tk.X, padx=5, pady=2)
 
-        # 使用 grid 布局，文件名列可扩展
-        frame.columnconfigure(0, weight=1)
-        # 文件名标签（显示 basename，完整文件名用于 tooltip）
+        # 文件名标签（限制宽度，不自动扩展）
         full_name = os.path.basename(path)
-        label = ttk.Label(frame, text=full_name, anchor='w')
-        label.grid(row=0, column=0, sticky='ew', padx=5)
-        # 添加 tooltip
+        label = ttk.Label(frame, text=full_name, width=30, anchor='w')  # width=30 控制显示宽度
+        label.grid(row=0, column=0, sticky='w', padx=5)
         ToolTip(label, full_name)  # 悬停显示完整文件名
 
         # Sheet 下拉
@@ -774,12 +770,10 @@ class App:
         # 显示进度条
         self.show_progress()
         try:
-            # 设置 sheet
+            # 设置 sheet：若配置中的 sheet 不存在，则保持当前 sheet，不弹警告
             if cfg.get("sheet") in self.sheet_names:
                 self.combo_sheet.set(cfg["sheet"])
                 self.current_sheet = cfg["sheet"]
-            else:
-                messagebox.showwarning("提示", f"配置中的工作表 '{cfg.get('sheet')}' 在当前文件中不存在，将使用当前工作表。")
             # 设置表头行
             self.spin_header.set(cfg.get("header_row", 1))
             # 设置导出路径
