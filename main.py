@@ -89,7 +89,7 @@ def get_config_dir():
 class App:
     def __init__(self):
         self.root = ttk.Window(themename="flatly")
-        self.root.title("Excel 列筛选工具")
+        self.root.title("REL测试数据筛选工具")
         self.root.geometry("1000x800")
         self.root.minsize(900, 750)
 
@@ -115,8 +115,6 @@ class App:
         self.header_row = 1
         self.columns_info = []
         self.selected_indices = []
-        self.is_merged = False         # 标记当前数据是否为合并结果
-        self.merged_source_dir = ""    # 合并文件所在目录（用于默认导出）
 
         # 多文件合并相关
         self.multi_files = []          # 列表，每个元素为 dict: {path, sheet_var, header_var, frame}
@@ -130,7 +128,17 @@ class App:
 
     # ---------- UI 构建 ----------
     def build_ui(self):
-        # 顶部文件选择区域（使用 grid 对齐）
+        # ========== 顶部多文件合并区域 ==========
+        self.multi_container = ttk.Frame(self.root, padding=5)
+        self.multi_container.pack(fill=tk.X)
+
+        self.btn_toggle_multi = ttk.Button(self.multi_container, text="展开多文件合并", command=self.toggle_multi_area)
+        self.btn_toggle_multi.pack(anchor='w', padx=5, pady=2)
+
+        # 预先创建 multi_frame，但不显示
+        self.multi_frame = ttk.Frame(self.multi_container, padding=5, relief=tk.GROOVE)
+
+        # ========== 主文件操作区域 ==========
         self.top_frame = ttk.Frame(self.root, padding=10)
         self.top_frame.pack(fill=tk.X)
         self.top_frame.columnconfigure(1, weight=1)
@@ -146,7 +154,6 @@ class App:
         self.entry_output = ttk.Entry(self.top_frame)
         self.entry_output.grid(row=1, column=1, sticky='ew', padx=5, pady=3)
         ttk.Button(self.top_frame, text="浏览...", command=self.browse_output).grid(row=1, column=2, padx=5, pady=3)
-        ttk.Button(self.top_frame, text="默认导入目录", command=self.set_output_to_source).grid(row=1, column=3, padx=5, pady=3)
 
         # 第2行：Sheet 和表头行
         ttk.Label(self.top_frame, text="Sheet：", width=12, anchor='e').grid(row=2, column=0, sticky='e', padx=5, pady=3)
@@ -160,17 +167,13 @@ class App:
         self.spin_header.bind("<Return>", self.on_header_change)
         self.spin_header.bind("<FocusOut>", self.on_header_change)
 
-        # 第3行：搜索列（加长）
+        # 第3行：搜索列（加长，横跨列1-2）
         ttk.Label(self.top_frame, text="搜索列：", width=12, anchor='e').grid(row=3, column=0, sticky='e', padx=5, pady=3)
         self.entry_search = ttk.Entry(self.top_frame)
-        self.entry_search.grid(row=3, column=1, sticky='ew', padx=5, pady=3)
+        self.entry_search.grid(row=3, column=1, columnspan=2, sticky='ew', padx=5, pady=3)
         self.entry_search.bind("<KeyRelease>", self.filter_left_listbox)
 
-        # 多文件合并区域折叠按钮
-        self.btn_toggle_multi = ttk.Button(self.top_frame, text="展开多文件合并", command=self.toggle_multi_area)
-        self.btn_toggle_multi.grid(row=4, column=0, columnspan=2, sticky='w', padx=5, pady=3)
-
-        # 中间列选择区域
+        # ========== 中间列选择区域 ==========
         self.mid_frame = ttk.Frame(self.root, padding=10)
         self.mid_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -217,10 +220,10 @@ class App:
         ttk.Button(btn_right_frame, text="上移", width=btn_width, command=self.move_up).pack(pady=2)
         ttk.Button(btn_right_frame, text="下移", width=btn_width, command=self.move_down).pack(pady=2)
 
-        # 配置管理区域
+        # ========== 配置管理区域 ==========
         config_frame = ttk.Frame(self.root, padding=10)
         config_frame.pack(fill=tk.X)
-        ttk.Label(config_frame, text="配置：", width=12, anchor='e').pack(side=tk.LEFT)
+        ttk.Label(config_frame, text="选择配置：", width=12, anchor='e').pack(side=tk.LEFT)
         self.combo_config = ttk.Combobox(config_frame, state="readonly", width=25)
         self.combo_config.pack(side=tk.LEFT, padx=5)
         self.combo_config.bind("<<ComboboxSelected>>", self.on_config_select)
@@ -228,12 +231,12 @@ class App:
         ttk.Button(config_frame, text="另存为", command=self.save_config_as).pack(side=tk.LEFT, padx=2)
         ttk.Button(config_frame, text="删除配置", command=self.delete_config).pack(side=tk.LEFT, padx=2)
 
-        # 状态栏（先 pack，确保在按钮下方）
+        # ========== 状态栏（先 pack，确保在底部按钮下方） ==========
         self.status_var = tk.StringVar(value="就绪")
         status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
-        # 底部操作按钮
+        # ========== 底部操作按钮 ==========
         bottom_frame = ttk.Frame(self.root, padding=10)
         bottom_frame.pack(fill=tk.X, side=tk.BOTTOM)
         self.btn_export = ttk.Button(bottom_frame, text="开始筛选并输出 Excel", command=self.export_excel,
@@ -248,8 +251,7 @@ class App:
             self.btn_toggle_multi.config(text="展开多文件合并")
             self.multi_area_visible = False
         else:
-            self.multi_frame = ttk.Frame(self.root, padding=10, relief=tk.GROOVE)
-            self.multi_frame.pack(fill=tk.X, before=self.mid_frame)
+            self.multi_frame.pack(fill=tk.X)  # 直接pack，位于按钮下方
             self.btn_toggle_multi.config(text="收起多文件合并")
             self.multi_area_visible = True
             if not self.multi_area_built:
@@ -271,7 +273,7 @@ class App:
         btn_row = ttk.Frame(container)
         btn_row.pack(fill=tk.X, pady=5)
         ttk.Button(btn_row, text="添加文件", command=self.add_multi_files).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_row, text="合并并导入到主界面", command=self.merge_multi_files, bootstyle="info").pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_row, text="合并并保存为中转文件", command=self.merge_multi_files, bootstyle="info").pack(side=tk.LEFT, padx=5)
 
         # 文件列表容器（使用 Canvas + Scrollbar 支持滚动）
         self.multi_files_canvas = tk.Canvas(container, height=150)
@@ -359,7 +361,7 @@ class App:
                 break
 
     def merge_multi_files(self):
-        """合并所有已添加的文件"""
+        """合并所有已添加的文件，保存为中转文件并加载"""
         if not self.multi_files:
             messagebox.showwarning("提示", "请先添加至少一个文件")
             return
@@ -375,7 +377,6 @@ class App:
             try:
                 ext = os.path.splitext(path)[1].lower()
                 if ext == ".csv":
-                    # 尝试编码
                     raw_data = b""
                     with open(path, "rb") as f:
                         for _ in range(10):
@@ -405,7 +406,15 @@ class App:
                     first_file_name = os.path.basename(path)
                 else:
                     if original_cols != first_original_cols:
-                        raise ValueError(f"文件 {os.path.basename(path)} 的列与 {first_file_name} 不一致")
+                        # 找出具体差异
+                        diff_details = []
+                        max_len = max(len(first_original_cols), len(original_cols))
+                        for i in range(max_len):
+                            col_a = first_original_cols[i] if i < len(first_original_cols) else "<缺失>"
+                            col_b = original_cols[i] if i < len(original_cols) else "<缺失>"
+                            if col_a != col_b:
+                                diff_details.append(f"第{i+1}列：{first_file_name}为'{col_a}'，{os.path.basename(path)}为'{col_b}'")
+                        raise ValueError("列不一致，具体差异：\n" + "\n".join(diff_details))
                 dataframes.append(df)
             except Exception as e:
                 self.status_var.set("合并失败")
@@ -419,34 +428,35 @@ class App:
         # 合并
         combined_df = pd.concat(dataframes, axis=0, ignore_index=True)
 
-        # 规范化列名（合并后统一处理）
-        self.df, self.columns_info = normalize_columns(combined_df)
+        # 保存中转文件
+        first_file_dir = os.path.dirname(self.multi_files[0]["path"])
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        merged_file_path = os.path.join(first_file_dir, f"合并结果_{timestamp}.xlsx")
+        try:
+            combined_df.to_excel(merged_file_path, index=False)
+        except Exception as e:
+            self.status_var.set("保存合并文件失败")
+            messagebox.showerror("错误", f"保存合并文件失败：{str(e)}")
+            return
 
-        # 更新界面
-        self.file_path = f"合并文件（{len(self.multi_files)}个）"
-        self.is_merged = True
-        self.merged_source_dir = os.path.dirname(self.multi_files[0]["path"])
-        self.sheet_names = ["合并结果"]
-        self.combo_sheet['values'] = self.sheet_names
-        self.combo_sheet.current(0)
-        self.current_sheet = "合并结果"
-        self.combo_sheet.config(state="disabled")
-        self.spin_header.set(1)
-        self.header_row = 1
-
-        # 刷新列列表
-        self.populate_left_listbox()
-        self.selected_indices = []
-        self.populate_right_listbox()
-
-        # 更新导出路径和文件显示
-        self.entry_output.delete(0, tk.END)
-        self.entry_output.insert(0, self.merged_source_dir)
+        # 自动加载该文件到主界面
+        self.file_path = merged_file_path
         self.entry_file.delete(0, tk.END)
         self.entry_file.insert(0, self.file_path)
+        self.entry_output.delete(0, tk.END)
+        self.entry_output.insert(0, first_file_dir)
 
-        self.status_var.set(f"合并完成，共 {len(combined_df)} 行")
-        messagebox.showinfo("成功", f"合并完成，共 {len(combined_df)} 行数据。")
+        # 重要：合并后的文件，表头行应重置为 1
+        self.spin_header.set(1)
+
+        # 隐藏多文件区域
+        self.toggle_multi_area()  # 收起
+
+        # 加载文件
+        self.load_file()
+
+        self.status_var.set(f"合并完成，中转文件已保存：{merged_file_path}")
+        messagebox.showinfo("成功", f"合并完成，中转文件已保存至：\n{merged_file_path}")
 
     # ---------- 文件操作 ----------
     def browse_file(self):
@@ -456,7 +466,6 @@ class App:
             self.entry_file.delete(0, tk.END)
             self.entry_file.insert(0, path)
             self.file_path = path
-            self.is_merged = False
             self.entry_output.delete(0, tk.END)
             self.entry_output.insert(0, os.path.dirname(path))
             self.load_file()
@@ -467,20 +476,9 @@ class App:
             self.entry_output.delete(0, tk.END)
             self.entry_output.insert(0, path)
 
-    def set_output_to_source(self):
-        if self.file_path:
-            if self.is_merged:
-                self.entry_output.delete(0, tk.END)
-                self.entry_output.insert(0, self.merged_source_dir)
-            else:
-                self.entry_output.delete(0, tk.END)
-                self.entry_output.insert(0, os.path.dirname(self.file_path))
-        else:
-            messagebox.showwarning("提示", "请先导入文件")
-
     # ---------- 数据加载 ----------
     def load_file(self):
-        """加载单文件"""
+        """加载单文件（根据 self.file_path）"""
         if not self.file_path:
             return
         ext = os.path.splitext(self.file_path)[1].lower()
@@ -514,8 +512,6 @@ class App:
     def read_headers(self):
         """读取当前 sheet 和表头行，刷新列信息"""
         if not self.file_path:
-            return
-        if self.is_merged:
             return
         try:
             header_row = int(self.spin_header.get())
@@ -655,13 +651,13 @@ class App:
 
     # ---------- 事件处理 ----------
     def on_sheet_change(self, event=None):
-        if not self.file_path or self.is_merged:
+        if not self.file_path:
             return
         self.current_sheet = self.combo_sheet.get()
         self.read_headers()
 
     def on_header_change(self, event=None):
-        if not self.file_path or self.is_merged:
+        if not self.file_path:
             return
         self.read_headers()
 
@@ -821,10 +817,7 @@ class App:
             return
         output_dir = self.entry_output.get().strip()
         if not output_dir:
-            if self.is_merged:
-                output_dir = self.merged_source_dir
-            else:
-                output_dir = os.path.dirname(self.file_path)
+            output_dir = os.path.dirname(self.file_path)
             if not output_dir:
                 messagebox.showerror("错误", "请指定导出路径")
                 return
@@ -835,10 +828,7 @@ class App:
                 messagebox.showerror("错误", f"导出路径不存在且无法创建：{str(e)}")
                 return
         # 文件名
-        if self.is_merged:
-            base = "合并结果"
-        else:
-            base = os.path.splitext(os.path.basename(self.file_path))[0]
+        base = os.path.splitext(os.path.basename(self.file_path))[0]
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = os.path.join(output_dir, f"{base}_筛选结果_{timestamp}.xlsx")
 
@@ -847,9 +837,16 @@ class App:
         try:
             selected_columns = [self.columns_info[i][0] for i in self.selected_indices]
             df_out = self.df.iloc[:, selected_columns].copy()
+            # 恢复原始列名（若原始为空，则使用 display）
+            original_names = [self.columns_info[i][1] for i in self.selected_indices]
+            display_names = [self.columns_info[i][2] for i in self.selected_indices]
+            final_names = [orig if orig != "" else disp for orig, disp in zip(original_names, display_names)]
+            df_out.columns = final_names
             df_out.to_excel(output_file, index=False)
             self.status_var.set(f"导出成功：{output_file}")
-            messagebox.showinfo("成功", f"文件已导出至：\n{output_file}")
+            # 询问是否打开文件
+            if messagebox.askyesno("导出成功", f"文件已导出至：\n{output_file}\n\n是否打开文件？"):
+                os.startfile(output_file)
         except Exception as e:
             self.status_var.set("导出失败")
             messagebox.showerror("错误", f"导出失败：{str(e)}\n{traceback.format_exc()}")
@@ -858,10 +855,7 @@ class App:
         output_dir = self.entry_output.get().strip()
         if not output_dir:
             if self.file_path:
-                if self.is_merged:
-                    output_dir = self.merged_source_dir
-                else:
-                    output_dir = os.path.dirname(self.file_path)
+                output_dir = os.path.dirname(self.file_path)
             else:
                 messagebox.showwarning("提示", "请先导入文件或指定导出路径")
                 return
