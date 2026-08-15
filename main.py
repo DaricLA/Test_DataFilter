@@ -55,7 +55,7 @@ def normalize_columns(df):
             display = base
         excel_letter = get_excel_column_letter(i)
         columns_info.append((i, original, display, excel_letter))
-        new_columns.append(display)  # 使用 display 作为规范化后的列名
+        new_columns.append(display)
     df.columns = new_columns
     return df, columns_info
 
@@ -134,7 +134,7 @@ class App:
         self.configs = []
         self.current_config_name = None
 
-        # 数据相关（主界面）
+        # 数据相关
         self.file_path = None
         self.df = None
         self.sheet_names = []
@@ -148,7 +148,7 @@ class App:
         self.multi_area_visible = False
         self.multi_area_built = False
 
-        # 配置应用进度条
+        # 进度条
         self.progress_bar = None
 
         self.build_ui()
@@ -165,7 +165,6 @@ class App:
         self.btn_toggle_multi = ttk.Button(self.multi_container, text="展开多文件合并", command=self.toggle_multi_area)
         self.btn_toggle_multi.pack(anchor='w', padx=5, pady=2)
 
-        # 预先创建 multi_frame，但不显示
         self.multi_frame = ttk.Frame(self.multi_container, padding=5, relief=tk.GROOVE)
 
         # ========== 主文件操作区域 ==========
@@ -197,29 +196,36 @@ class App:
         self.spin_header.bind("<Return>", self.on_header_change)
         self.spin_header.bind("<FocusOut>", self.on_header_change)
 
-        # 第3行：搜索列（加长，横跨列1-2）
+        # 第3行：搜索列
         ttk.Label(self.top_frame, text="搜索列：", width=12, anchor='e').grid(row=3, column=0, sticky='e', padx=5, pady=3)
         self.entry_search = ttk.Entry(self.top_frame)
         self.entry_search.grid(row=3, column=1, columnspan=2, sticky='ew', padx=5, pady=3)
         self.entry_search.bind("<KeyRelease>", self.filter_left_listbox)
 
-        # ========== 底部状态栏（先 pack，确保在底部按钮下方） ==========
+        # ========== 底部状态栏 ==========
         self.status_var = tk.StringVar(value="就绪")
         status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
-        # ========== 底部按钮区域（固定高度，不被压缩） ==========
-        self.bottom_frame = ttk.Frame(self.root, padding=10, height=55)  # 增加高度到55
-        self.bottom_frame.pack_propagate(False)  # 禁止子控件改变高度
+        # ========== 底部按钮区域（动态计算固定高度） ==========
+        self.bottom_frame = ttk.Frame(self.root, padding=10)
         self.bottom_frame.pack(side=tk.BOTTOM, fill=tk.X)
+
         self.btn_export = ttk.Button(self.bottom_frame, text="开始筛选并输出 Excel", command=self.export_excel,
                                      bootstyle="info")
         self.btn_export.pack(side=tk.LEFT, padx=5)
         ttk.Button(self.bottom_frame, text="打开输出目录", command=self.open_output_dir).pack(side=tk.LEFT, padx=5)
 
-        # ========== 配置管理区域（也放在底部，不被压缩） ==========
+        # 动态计算并固定高度
+        self.root.update_idletasks()
+        btn_req_height = self.btn_export.winfo_reqheight()
+        bottom_frame_height = btn_req_height + 20 + 4  # padding 10+10 + 余量4
+        self.bottom_frame.configure(height=bottom_frame_height)
+        self.bottom_frame.pack_propagate(False)
+
+        # ========== 配置管理区域（底部，自适应） ==========
         config_frame = ttk.Frame(self.root, padding=10)
-        config_frame.pack(side=tk.BOTTOM, fill=tk.X)  # 改为BOTTOM
+        config_frame.pack(side=tk.BOTTOM, fill=tk.X)
         ttk.Label(config_frame, text="选择配置：", width=12, anchor='e').pack(side=tk.LEFT)
         self.combo_config = ttk.Combobox(config_frame, state="readonly", width=25)
         self.combo_config.pack(side=tk.LEFT, padx=5)
@@ -228,14 +234,13 @@ class App:
         ttk.Button(config_frame, text="另存为", command=self.save_config_as).pack(side=tk.LEFT, padx=2)
         ttk.Button(config_frame, text="删除配置", command=self.delete_config).pack(side=tk.LEFT, padx=2)
 
-        # ========== 配置应用进度条（初始隐藏） ==========
+        # ========== 进度条 ==========
         self.progress_bar = ttk.Progressbar(self.root, mode='indeterminate', bootstyle='info', length=200)
 
-        # ========== 中间列选择区域（必须在底部区域之后 pack，以避免被挤压） ==========
+        # ========== 中间列选择区域 ==========
         self.mid_frame = ttk.Frame(self.root, padding=10)
         self.mid_frame.pack(fill=tk.BOTH, expand=True)
 
-        # 左侧列表
         left_frame = ttk.Frame(self.mid_frame)
         left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         ttk.Label(left_frame, text="所有列（可多选，Ctrl/Shift）").pack(anchor=tk.W)
@@ -247,7 +252,6 @@ class App:
         scroll_left.pack(side=tk.RIGHT, fill=tk.Y)
         self.list_left.bind("<Double-Button-1>", lambda e: self.add_columns())
 
-        # 中间按钮列（统一尺寸，带颜色）
         btn_mid_frame = ttk.Frame(self.mid_frame, padding=10)
         btn_mid_frame.pack(side=tk.LEFT, fill=tk.Y)
         btn_width = 8
@@ -260,7 +264,6 @@ class App:
         ttk.Button(btn_mid_frame, text="< 移除", width=btn_width, bootstyle="outline-danger",
                    command=self.remove_columns).pack(pady=2)
 
-        # 右侧列表
         right_frame = ttk.Frame(self.mid_frame)
         right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         ttk.Label(right_frame, text="已选列（输出顺序）").pack(anchor=tk.W)
@@ -272,7 +275,6 @@ class App:
         scroll_right.pack(side=tk.RIGHT, fill=tk.Y)
         self.list_right.bind("<Double-Button-1>", lambda e: self.remove_columns())
 
-        # 右侧按钮列（上下移动）
         btn_right_frame = ttk.Frame(self.mid_frame, padding=10)
         btn_right_frame.pack(side=tk.LEFT, fill=tk.Y)
         ttk.Button(btn_right_frame, text="上移", width=btn_width, command=self.move_up).pack(pady=2)
@@ -284,7 +286,6 @@ class App:
             self.multi_frame.pack_forget()
             self.btn_toggle_multi.config(text="展开多文件合并")
             self.multi_area_visible = False
-            # 减少窗口高度 220px
             self.change_window_height(-220)
         else:
             self.multi_frame.pack(fill=tk.X)
@@ -292,7 +293,6 @@ class App:
             self.multi_area_visible = True
             if not self.multi_area_built:
                 self.build_multi_area()
-            # 增加窗口高度 220px
             self.change_window_height(220)
 
     def change_window_height(self, delta):
@@ -302,7 +302,6 @@ class App:
             current_width = self.root.winfo_width()
             current_height = self.root.winfo_height()
             new_height = current_height + delta
-            # 确保不低于最小高度
             min_height = 750
             if new_height < min_height:
                 new_height = min_height
@@ -314,28 +313,23 @@ class App:
         """构建多文件合并区域 UI（首次调用时创建内部控件）"""
         if self.multi_area_built:
             return
-        # 清空可能已存在的子控件
         for widget in self.multi_frame.winfo_children():
             widget.destroy()
 
-        # 内部使用一个容器，包含文件列表和操作按钮
         container = ttk.Frame(self.multi_frame)
         container.pack(fill=tk.X, expand=True)
 
-        # 按钮行
         btn_row = ttk.Frame(container)
         btn_row.pack(fill=tk.X, pady=5)
         ttk.Button(btn_row, text="添加文件", command=self.add_multi_files).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_row, text="合并并保存为中转文件", command=self.merge_multi_files, bootstyle="info").pack(side=tk.LEFT, padx=5)
 
-        # 文件列表容器（使用 Canvas + Scrollbar 支持滚动）
         self.multi_files_canvas = tk.Canvas(container, height=150)
         scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=self.multi_files_canvas.yview)
         self.multi_files_canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.multi_files_canvas.pack(fill=tk.BOTH, expand=True)
 
-        # 绑定鼠标滚轮事件
         self.multi_files_canvas.bind("<MouseWheel>", self.on_mousewheel)
 
         self.multi_files_frame = ttk.Frame(self.multi_files_canvas)
@@ -365,28 +359,23 @@ class App:
         frame = ttk.Frame(self.multi_files_frame)
         frame.pack(fill=tk.X, padx=5, pady=2)
 
-        # 文件名标签（宽度改为51，约原30的1.7倍）
         full_name = os.path.basename(path)
-        label = ttk.Label(frame, text=full_name, width=51, anchor='w')
+        label = ttk.Label(frame, text=full_name, width=55, anchor='w')
         label.grid(row=0, column=0, sticky='w', padx=5)
-        ToolTip(label, full_name)  # 悬停显示完整文件名
+        ToolTip(label, full_name)
 
-        # Sheet 下拉
         sheet_var = tk.StringVar(value="")
         sheet_combo = ttk.Combobox(frame, textvariable=sheet_var, state="readonly", width=15)
         sheet_combo.grid(row=0, column=1, padx=5)
 
-        # 表头行 Spinbox
         header_var = tk.IntVar(value=1)
         header_spin = ttk.Spinbox(frame, from_=1, to=1000, width=5, textvariable=header_var)
         header_spin.grid(row=0, column=2, padx=5)
 
-        # 移除按钮
         remove_btn = ttk.Button(frame, text="移除", bootstyle="outline-danger",
                                 command=lambda: self.remove_multi_file(path))
         remove_btn.grid(row=0, column=3, padx=5)
 
-        # 读取该文件的 sheet 名称
         ext = os.path.splitext(path)[1].lower()
         sheet_names = []
         if ext == ".csv":
@@ -407,7 +396,10 @@ class App:
                 return
         sheet_combo['values'] = sheet_names
 
-        # 存储信息
+        for child in frame.winfo_children():
+            child.bind("<MouseWheel>", self.on_mousewheel)
+        frame.bind("<MouseWheel>", self.on_mousewheel)
+
         self.multi_files.append({
             "path": path,
             "frame": frame,
@@ -462,14 +454,12 @@ class App:
                     engine = "openpyxl" if ext == ".xlsx" else "xlrd"
                     df = pd.read_excel(path, sheet_name=sheet, header=header_row-1, engine=engine)
 
-                # 获取原始列名
                 original_cols = list(df.columns)
                 if first_original_cols is None:
                     first_original_cols = original_cols
                     first_file_name = os.path.basename(path)
                 else:
                     if original_cols != first_original_cols:
-                        # 找出具体差异（最多前3个）
                         diff_details = []
                         max_len = max(len(first_original_cols), len(original_cols))
                         count = 0
@@ -495,10 +485,7 @@ class App:
             messagebox.showerror("错误", "没有可合并的数据")
             return
 
-        # 合并
         combined_df = pd.concat(dataframes, axis=0, ignore_index=True)
-
-        # 保存中转文件
         first_file_dir = os.path.dirname(self.multi_files[0]["path"])
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         merged_file_path = os.path.join(first_file_dir, f"合并结果_{timestamp}.xlsx")
@@ -509,22 +496,14 @@ class App:
             messagebox.showerror("错误", f"保存合并文件失败：{str(e)}")
             return
 
-        # 自动加载该文件到主界面
         self.file_path = merged_file_path
         self.entry_file.delete(0, tk.END)
         self.entry_file.insert(0, self.file_path)
         self.entry_output.delete(0, tk.END)
         self.entry_output.insert(0, first_file_dir)
-
-        # 表头行重置为 1
         self.spin_header.set(1)
-
-        # 隐藏多文件区域
-        self.toggle_multi_area()  # 收起，窗口高度恢复
-
-        # 加载文件
+        self.toggle_multi_area()
         self.load_file()
-
         self.status_var.set(f"合并完成，中转文件已保存：{merged_file_path}")
         messagebox.showinfo("成功", f"合并完成，中转文件已保存至：\n{merged_file_path}")
 
@@ -628,7 +607,6 @@ class App:
                 self.df = None
                 return
 
-            # 规范化列名
             self.df, self.columns_info = normalize_columns(self.df)
             self.populate_left_listbox()
             self.selected_indices = []
@@ -775,16 +753,12 @@ class App:
         if not self.file_path:
             messagebox.showwarning("提示", "请先导入文件再应用配置")
             return
-        # 显示进度条
         self.show_progress()
         try:
-            # 设置 sheet：若配置中的 sheet 不存在，则保持当前 sheet，不弹警告
             if cfg.get("sheet") in self.sheet_names:
                 self.combo_sheet.set(cfg["sheet"])
                 self.current_sheet = cfg["sheet"]
-            # 设置表头行
             self.spin_header.set(cfg.get("header_row", 1))
-            # 设置导出路径
             self.entry_output.delete(0, tk.END)
             self.entry_output.insert(0, cfg.get("output_dir", ""))
 
@@ -814,7 +788,6 @@ class App:
             self.hide_progress()
 
     def show_progress(self):
-        """在状态栏上方显示进度条"""
         if self.progress_bar is None:
             return
         if not self.progress_bar.winfo_manager():
@@ -822,7 +795,6 @@ class App:
         self.progress_bar.start(10)
 
     def hide_progress(self):
-        """隐藏进度条"""
         if self.progress_bar is not None:
             self.progress_bar.stop()
             if self.progress_bar.winfo_manager():
@@ -916,7 +888,6 @@ class App:
             except Exception as e:
                 messagebox.showerror("错误", f"导出路径不存在且无法创建：{str(e)}")
                 return
-        # 文件名
         base = os.path.splitext(os.path.basename(self.file_path))[0]
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = os.path.join(output_dir, f"{base}_筛选结果_{timestamp}.xlsx")
@@ -926,14 +897,12 @@ class App:
         try:
             selected_columns = [self.columns_info[i][0] for i in self.selected_indices]
             df_out = self.df.iloc[:, selected_columns].copy()
-            # 恢复原始列名
             original_names = [self.columns_info[i][1] for i in self.selected_indices]
             display_names = [self.columns_info[i][2] for i in self.selected_indices]
             final_names = [orig if orig != "" else disp for orig, disp in zip(original_names, display_names)]
             df_out.columns = final_names
             df_out.to_excel(output_file, index=False)
             self.status_var.set(f"导出成功：{output_file}")
-            # 询问是否打开文件
             if messagebox.askyesno("导出成功", f"文件已导出至：\n{output_file}\n\n是否打开文件？"):
                 os.startfile(output_file)
         except Exception as e:
