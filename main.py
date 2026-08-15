@@ -805,7 +805,7 @@ class App:
             messagebox.showwarning("提示", "请先导入文件并选择列")
             return
         if not self.selected_indices:
-            messagebox.showwarning("提示", "请至少选择一列")
+            messagebox.showwarning("提示", "请选择配置或至少选择一列")
             return
         if self.current_config_name and self.current_config_name in [c["name"] for c in self.configs]:
             for cfg in self.configs:
@@ -823,7 +823,7 @@ class App:
             messagebox.showwarning("提示", "请先导入文件并选择列")
             return
         if not self.selected_indices:
-            messagebox.showwarning("提示", "请至少选择一列")
+            messagebox.showwarning("提示", "请选择配置或至少选择一列")
             return
         name = simpledialog.askstring("保存配置", "请输入配置名称：", parent=self.root)
         if not name:
@@ -871,7 +871,7 @@ class App:
             messagebox.showwarning("提示", "请先导入文件")
             return
         if not self.selected_indices:
-            messagebox.showwarning("提示", "请至少选择一列")
+            messagebox.showwarning("提示", "请选择配置或至少选择一列")
             return
         if self.df is None:
             messagebox.showerror("错误", "数据未加载，请重新导入文件")
