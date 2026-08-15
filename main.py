@@ -10,7 +10,7 @@ import pandas as pd
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 
-# 尝试导入 openpyxl 和 xlrd，打包时需包含
+# 确保打包时包含 openpyxl 和 xlrd
 try:
     import openpyxl  # noqa: F401
 except ImportError:
@@ -22,7 +22,7 @@ except ImportError:
 
 
 def get_excel_column_letter(n):
-    """将数字索引（0-based）转换为 Excel 列字母（A, B, ...）"""
+    """数字索引（0-based）转 Excel 列字母"""
     n += 1
     result = ""
     while n > 0:
@@ -31,24 +31,50 @@ def get_excel_column_letter(n):
     return result
 
 
+def normalize_columns(df):
+    """
+    规范化列名：处理空列名、重复列名，返回 (df_with_normalized_columns, columns_info)
+    columns_info: [(index, original_name, display_name, excel_letter)]
+    """
+    raw_names = list(df.columns)
+    columns_info = []
+    seen = {}
+    new_columns = []
+    for i, raw in enumerate(raw_names):
+        if pd.isna(raw) or str(raw).strip() == "":
+            original = ""
+            base = f"列{i+1}"
+        else:
+            original = str(raw).strip()
+            base = original
+        if base in seen:
+            seen[base] += 1
+            display = f"{base}_{seen[base]}"
+        else:
+            seen[base] = 0
+            display = base
+        excel_letter = get_excel_column_letter(i)
+        columns_info.append((i, original, display, excel_letter))
+        new_columns.append(display)  # 使用 display 作为规范化后的列名
+    df.columns = new_columns
+    return df, columns_info
+
+
 def get_config_dir():
-    """获取配置文件目录，优先使用 exe 同目录/config，失败则请求用户选择目录"""
+    """获取配置文件目录，优先使用 exe 同目录/config，失败则请求用户选择"""
     if getattr(sys, 'frozen', False):
         base_dir = os.path.dirname(sys.executable)
     else:
         base_dir = os.path.dirname(os.path.abspath(__file__))
-
     config_dir = os.path.join(base_dir, "config")
     try:
         os.makedirs(config_dir, exist_ok=True)
-        # 测试写入权限
         test_file = os.path.join(config_dir, ".write_test")
         with open(test_file, "w") as f:
             f.write("test")
         os.remove(test_file)
         return config_dir
     except Exception:
-        # 无法创建或写入，请求用户选择目录
         messagebox.showwarning("配置目录不可用",
                                f"无法在程序目录创建配置文件夹：\n{config_dir}\n\n"
                                "请选择一个可写的目录用于保存配置。")
@@ -56,7 +82,6 @@ def get_config_dir():
         if chosen:
             return chosen
         else:
-            # 用户取消，使用临时目录
             import tempfile
             return tempfile.gettempdir()
 
@@ -65,10 +90,10 @@ class App:
     def __init__(self):
         self.root = ttk.Window(themename="flatly")
         self.root.title("Excel 列筛选工具")
-        self.root.geometry("1000x700")
-        self.root.minsize(900, 600)
+        self.root.geometry("1000x800")
+        self.root.minsize(900, 750)
 
-        # 字体设置
+        # 字体
         self.default_font = ("Microsoft YaHei UI", 10)
         self.root.option_add("*Font", self.default_font)
         style = ttk.Style()
@@ -79,78 +104,78 @@ class App:
         # 配置目录
         self.config_dir = get_config_dir()
         self.config_file = os.path.join(self.config_dir, "configs.json")
-        self.configs = []          # 配置列表，元素为 dict
-        self.current_config_name = None  # 当前选中的配置名
+        self.configs = []
+        self.current_config_name = None
 
-        # 数据相关
-        self.file_path = None
-        self.df = None             # 当前完整数据（包含所有列）
+        # 数据相关（主界面）
+        self.file_path = None          # 单文件路径
+        self.df = None                 # 当前数据
         self.sheet_names = []
         self.current_sheet = None
         self.header_row = 1
-        self.columns_info = []     # 存储列信息：[(index, original_name, display_name, excel_letter)]
-        self.selected_indices = [] # 右侧已选列的索引（0-based）
+        self.columns_info = []
+        self.selected_indices = []
+        self.is_merged = False         # 标记当前数据是否为合并结果
+        self.merged_source_dir = ""    # 合并文件所在目录（用于默认导出）
 
-        # 构建界面
+        # 多文件合并相关
+        self.multi_files = []          # 列表，每个元素为 dict: {path, sheet_var, header_var, frame}
+        self.multi_area_visible = False
+        self.multi_area_built = False
+
         self.build_ui()
-
-        # 加载配置
         self.load_configs()
         self.populate_config_combobox()
-
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     # ---------- UI 构建 ----------
     def build_ui(self):
-        # 顶部文件选择
-        top_frame = ttk.Frame(self.root, padding=10)
-        top_frame.pack(fill=tk.X)
+        # 顶部文件选择区域（使用 grid 对齐）
+        self.top_frame = ttk.Frame(self.root, padding=10)
+        self.top_frame.pack(fill=tk.X)
+        self.top_frame.columnconfigure(1, weight=1)
 
-        # 导入文件行
-        row1 = ttk.Frame(top_frame)
-        row1.pack(fill=tk.X, pady=2)
-        ttk.Label(row1, text="导入文件：").pack(side=tk.LEFT)
-        self.entry_file = ttk.Entry(row1, width=60)
-        self.entry_file.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        ttk.Button(row1, text="浏览...", command=self.browse_file).pack(side=tk.LEFT, padx=2)
+        # 第0行：导入文件
+        ttk.Label(self.top_frame, text="导入文件：", width=12, anchor='e').grid(row=0, column=0, sticky='e', padx=5, pady=3)
+        self.entry_file = ttk.Entry(self.top_frame)
+        self.entry_file.grid(row=0, column=1, sticky='ew', padx=5, pady=3)
+        ttk.Button(self.top_frame, text="浏览...", command=self.browse_file).grid(row=0, column=2, padx=5, pady=3)
 
-        # 导出路径行
-        row2 = ttk.Frame(top_frame)
-        row2.pack(fill=tk.X, pady=2)
-        ttk.Label(row2, text="导出路径：").pack(side=tk.LEFT)
-        self.entry_output = ttk.Entry(row2, width=60)
-        self.entry_output.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        ttk.Button(row2, text="浏览...", command=self.browse_output).pack(side=tk.LEFT, padx=2)
-        ttk.Button(row2, text="默认导入目录", command=self.set_output_to_source).pack(side=tk.LEFT, padx=2)
+        # 第1行：导出路径
+        ttk.Label(self.top_frame, text="导出路径：", width=12, anchor='e').grid(row=1, column=0, sticky='e', padx=5, pady=3)
+        self.entry_output = ttk.Entry(self.top_frame)
+        self.entry_output.grid(row=1, column=1, sticky='ew', padx=5, pady=3)
+        ttk.Button(self.top_frame, text="浏览...", command=self.browse_output).grid(row=1, column=2, padx=5, pady=3)
+        ttk.Button(self.top_frame, text="默认导入目录", command=self.set_output_to_source).grid(row=1, column=3, padx=5, pady=3)
 
-        # Sheet 和表头行
-        row3 = ttk.Frame(top_frame)
-        row3.pack(fill=tk.X, pady=5)
-        ttk.Label(row3, text="Sheet：").pack(side=tk.LEFT)
-        self.combo_sheet = ttk.Combobox(row3, state="readonly", width=20)
-        self.combo_sheet.pack(side=tk.LEFT, padx=5)
+        # 第2行：Sheet 和表头行
+        ttk.Label(self.top_frame, text="Sheet：", width=12, anchor='e').grid(row=2, column=0, sticky='e', padx=5, pady=3)
+        self.combo_sheet = ttk.Combobox(self.top_frame, state="readonly", width=20)
+        self.combo_sheet.grid(row=2, column=1, sticky='w', padx=5, pady=3)
         self.combo_sheet.bind("<<ComboboxSelected>>", self.on_sheet_change)
-        ttk.Label(row3, text="表头行：").pack(side=tk.LEFT, padx=(15, 0))
-        self.spin_header = ttk.Spinbox(row3, from_=1, to=1000, width=5)
+        ttk.Label(self.top_frame, text="表头行：").grid(row=2, column=1, sticky='e', padx=(0, 180), pady=3)
+        self.spin_header = ttk.Spinbox(self.top_frame, from_=1, to=1000, width=5)
         self.spin_header.set(1)
-        self.spin_header.pack(side=tk.LEFT, padx=5)
+        self.spin_header.grid(row=2, column=1, sticky='e', padx=(0, 60), pady=3)
         self.spin_header.bind("<Return>", self.on_header_change)
         self.spin_header.bind("<FocusOut>", self.on_header_change)
 
-        # 搜索列
-        row4 = ttk.Frame(top_frame)
-        row4.pack(fill=tk.X, pady=2)
-        ttk.Label(row4, text="搜索列：").pack(side=tk.LEFT)
-        self.entry_search = ttk.Entry(row4, width=30)
-        self.entry_search.pack(side=tk.LEFT, padx=5)
+        # 第3行：搜索列（加长）
+        ttk.Label(self.top_frame, text="搜索列：", width=12, anchor='e').grid(row=3, column=0, sticky='e', padx=5, pady=3)
+        self.entry_search = ttk.Entry(self.top_frame)
+        self.entry_search.grid(row=3, column=1, sticky='ew', padx=5, pady=3)
         self.entry_search.bind("<KeyRelease>", self.filter_left_listbox)
 
+        # 多文件合并区域折叠按钮
+        self.btn_toggle_multi = ttk.Button(self.top_frame, text="展开多文件合并", command=self.toggle_multi_area)
+        self.btn_toggle_multi.grid(row=4, column=0, columnspan=2, sticky='w', padx=5, pady=3)
+
         # 中间列选择区域
-        mid_frame = ttk.Frame(self.root, padding=10)
-        mid_frame.pack(fill=tk.BOTH, expand=True)
+        self.mid_frame = ttk.Frame(self.root, padding=10)
+        self.mid_frame.pack(fill=tk.BOTH, expand=True)
 
         # 左侧列表
-        left_frame = ttk.Frame(mid_frame)
+        left_frame = ttk.Frame(self.mid_frame)
         left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         ttk.Label(left_frame, text="所有列（可多选，Ctrl/Shift）").pack(anchor=tk.W)
         self.list_left = tk.Listbox(left_frame, selectmode=tk.EXTENDED, exportselection=False,
@@ -159,17 +184,23 @@ class App:
         self.list_left.configure(yscrollcommand=scroll_left.set)
         self.list_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll_left.pack(side=tk.RIGHT, fill=tk.Y)
+        self.list_left.bind("<Double-Button-1>", lambda e: self.add_columns())
 
-        # 中间按钮列
-        btn_mid_frame = ttk.Frame(mid_frame, padding=10)
+        # 中间按钮列（统一尺寸，带颜色）
+        btn_mid_frame = ttk.Frame(self.mid_frame, padding=10)
         btn_mid_frame.pack(side=tk.LEFT, fill=tk.Y)
-        ttk.Button(btn_mid_frame, text="全选", command=self.select_all_left).pack(pady=2)
-        ttk.Button(btn_mid_frame, text="反选", command=self.invert_selection_left).pack(pady=2)
-        ttk.Button(btn_mid_frame, text="添加 >", command=self.add_columns).pack(pady=10)
-        ttk.Button(btn_mid_frame, text="< 移除", command=self.remove_columns).pack(pady=2)
+        btn_width = 8
+        ttk.Button(btn_mid_frame, text="全选", width=btn_width, bootstyle="secondary-outline",
+                   command=self.select_all_left).pack(pady=2)
+        ttk.Button(btn_mid_frame, text="反选", width=btn_width, bootstyle="secondary-outline",
+                   command=self.invert_selection_left).pack(pady=2)
+        ttk.Button(btn_mid_frame, text="添加 >", width=btn_width, bootstyle="outline-primary",
+                   command=self.add_columns).pack(pady=10)
+        ttk.Button(btn_mid_frame, text="< 移除", width=btn_width, bootstyle="outline-danger",
+                   command=self.remove_columns).pack(pady=2)
 
         # 右侧列表
-        right_frame = ttk.Frame(mid_frame)
+        right_frame = ttk.Frame(self.mid_frame)
         right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         ttk.Label(right_frame, text="已选列（输出顺序）").pack(anchor=tk.W)
         self.list_right = tk.Listbox(right_frame, selectmode=tk.EXTENDED, exportselection=False,
@@ -178,17 +209,18 @@ class App:
         self.list_right.configure(yscrollcommand=scroll_right.set)
         self.list_right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll_right.pack(side=tk.RIGHT, fill=tk.Y)
+        self.list_right.bind("<Double-Button-1>", lambda e: self.remove_columns())
 
         # 右侧按钮列（上下移动）
-        btn_right_frame = ttk.Frame(mid_frame, padding=10)
+        btn_right_frame = ttk.Frame(self.mid_frame, padding=10)
         btn_right_frame.pack(side=tk.LEFT, fill=tk.Y)
-        ttk.Button(btn_right_frame, text="上移", command=self.move_up).pack(pady=2)
-        ttk.Button(btn_right_frame, text="下移", command=self.move_down).pack(pady=2)
+        ttk.Button(btn_right_frame, text="上移", width=btn_width, command=self.move_up).pack(pady=2)
+        ttk.Button(btn_right_frame, text="下移", width=btn_width, command=self.move_down).pack(pady=2)
 
         # 配置管理区域
         config_frame = ttk.Frame(self.root, padding=10)
         config_frame.pack(fill=tk.X)
-        ttk.Label(config_frame, text="配置：").pack(side=tk.LEFT)
+        ttk.Label(config_frame, text="配置：", width=12, anchor='e').pack(side=tk.LEFT)
         self.combo_config = ttk.Combobox(config_frame, state="readonly", width=25)
         self.combo_config.pack(side=tk.LEFT, padx=5)
         self.combo_config.bind("<<ComboboxSelected>>", self.on_config_select)
@@ -196,18 +228,225 @@ class App:
         ttk.Button(config_frame, text="另存为", command=self.save_config_as).pack(side=tk.LEFT, padx=2)
         ttk.Button(config_frame, text="删除配置", command=self.delete_config).pack(side=tk.LEFT, padx=2)
 
-        # 底部操作按钮
-        bottom_frame = ttk.Frame(self.root, padding=10)
-        bottom_frame.pack(fill=tk.X)
-        self.btn_export = ttk.Button(bottom_frame, text="开始筛选并输出 Excel", command=self.export_excel,
-                                     bootstyle="success")
-        self.btn_export.pack(side=tk.LEFT, padx=5)
-        ttk.Button(bottom_frame, text="打开输出目录", command=self.open_output_dir).pack(side=tk.LEFT, padx=5)
-
-        # 状态栏
+        # 状态栏（先 pack，确保在按钮下方）
         self.status_var = tk.StringVar(value="就绪")
         status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # 底部操作按钮
+        bottom_frame = ttk.Frame(self.root, padding=10)
+        bottom_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        self.btn_export = ttk.Button(bottom_frame, text="开始筛选并输出 Excel", command=self.export_excel,
+                                     bootstyle="info")
+        self.btn_export.pack(side=tk.LEFT, padx=5)
+        ttk.Button(bottom_frame, text="打开输出目录", command=self.open_output_dir).pack(side=tk.LEFT, padx=5)
+
+    def toggle_multi_area(self):
+        """展开/收起多文件合并区域"""
+        if self.multi_area_visible:
+            self.multi_frame.pack_forget()
+            self.btn_toggle_multi.config(text="展开多文件合并")
+            self.multi_area_visible = False
+        else:
+            self.multi_frame = ttk.Frame(self.root, padding=10, relief=tk.GROOVE)
+            self.multi_frame.pack(fill=tk.X, before=self.mid_frame)
+            self.btn_toggle_multi.config(text="收起多文件合并")
+            self.multi_area_visible = True
+            if not self.multi_area_built:
+                self.build_multi_area()
+
+    def build_multi_area(self):
+        """构建多文件合并区域 UI（首次调用时创建内部控件）"""
+        if self.multi_area_built:
+            return
+        # 清空可能已存在的子控件
+        for widget in self.multi_frame.winfo_children():
+            widget.destroy()
+
+        # 内部使用一个容器，包含文件列表和操作按钮
+        container = ttk.Frame(self.multi_frame)
+        container.pack(fill=tk.X, expand=True)
+
+        # 按钮行
+        btn_row = ttk.Frame(container)
+        btn_row.pack(fill=tk.X, pady=5)
+        ttk.Button(btn_row, text="添加文件", command=self.add_multi_files).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_row, text="合并并导入到主界面", command=self.merge_multi_files, bootstyle="info").pack(side=tk.LEFT, padx=5)
+
+        # 文件列表容器（使用 Canvas + Scrollbar 支持滚动）
+        self.multi_files_canvas = tk.Canvas(container, height=150)
+        scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=self.multi_files_canvas.yview)
+        self.multi_files_canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.multi_files_canvas.pack(fill=tk.BOTH, expand=True)
+
+        self.multi_files_frame = ttk.Frame(self.multi_files_canvas)
+        self.multi_files_canvas.create_window((0, 0), window=self.multi_files_frame, anchor='nw')
+        self.multi_files_frame.bind("<Configure>", lambda e: self.multi_files_canvas.configure(scrollregion=self.multi_files_canvas.bbox("all")))
+
+        self.multi_area_built = True
+
+    def add_multi_files(self):
+        """添加多个文件到合并列表"""
+        filetypes = [("Excel/CSV 文件", "*.xlsx *.xls *.csv"), ("所有文件", "*.*")]
+        paths = filedialog.askopenfilenames(title="选择多个文件", filetypes=filetypes)
+        if not paths:
+            return
+        for path in paths:
+            self.add_multi_file_entry(path)
+
+    def add_multi_file_entry(self, path):
+        """在合并区域添加一个文件条目"""
+        if not self.multi_area_built:
+            self.build_multi_area()
+        frame = ttk.Frame(self.multi_files_frame)
+        frame.pack(fill=tk.X, padx=5, pady=2)
+
+        # 文件名标签
+        label = ttk.Label(frame, text=os.path.basename(path), width=30, anchor='w')
+        label.pack(side=tk.LEFT)
+
+        # Sheet 下拉
+        sheet_var = tk.StringVar(value="")
+        sheet_combo = ttk.Combobox(frame, textvariable=sheet_var, state="readonly", width=15)
+        sheet_combo.pack(side=tk.LEFT, padx=5)
+
+        # 表头行 Spinbox
+        header_var = tk.IntVar(value=1)
+        header_spin = ttk.Spinbox(frame, from_=1, to=1000, width=5, textvariable=header_var)
+        header_spin.pack(side=tk.LEFT, padx=5)
+
+        # 移除按钮
+        remove_btn = ttk.Button(frame, text="移除", bootstyle="outline-danger",
+                                command=lambda: self.remove_multi_file(path))
+        remove_btn.pack(side=tk.LEFT, padx=5)
+
+        # 读取该文件的 sheet 名称
+        ext = os.path.splitext(path)[1].lower()
+        sheet_names = []
+        if ext == ".csv":
+            sheet_names = ["单表"]
+            sheet_combo.config(state="disabled")
+            sheet_var.set("单表")
+        else:
+            try:
+                engine = "openpyxl" if ext == ".xlsx" else "xlrd"
+                xls = pd.ExcelFile(path, engine=engine)
+                sheet_names = xls.sheet_names
+                sheet_combo.config(state="readonly")
+                if sheet_names:
+                    sheet_var.set(sheet_names[0])
+            except Exception as e:
+                messagebox.showerror("错误", f"读取文件 {os.path.basename(path)} 的 sheet 失败：{str(e)}")
+                frame.destroy()
+                return
+        sheet_combo['values'] = sheet_names
+
+        # 存储信息
+        self.multi_files.append({
+            "path": path,
+            "frame": frame,
+            "sheet_var": sheet_var,
+            "header_var": header_var,
+        })
+
+    def remove_multi_file(self, path):
+        """从合并列表移除指定文件"""
+        for i, item in enumerate(self.multi_files):
+            if item["path"] == path:
+                item["frame"].destroy()
+                del self.multi_files[i]
+                break
+
+    def merge_multi_files(self):
+        """合并所有已添加的文件"""
+        if not self.multi_files:
+            messagebox.showwarning("提示", "请先添加至少一个文件")
+            return
+        self.status_var.set("正在合并文件...")
+        self.root.update()
+        dataframes = []
+        first_original_cols = None
+        first_file_name = ""
+        for item in self.multi_files:
+            path = item["path"]
+            sheet = item["sheet_var"].get()
+            header_row = item["header_var"].get()
+            try:
+                ext = os.path.splitext(path)[1].lower()
+                if ext == ".csv":
+                    # 尝试编码
+                    raw_data = b""
+                    with open(path, "rb") as f:
+                        for _ in range(10):
+                            line = f.readline()
+                            if not line:
+                                break
+                            raw_data += line
+                    enc = None
+                    for candidate in ['utf-8-sig', 'gbk', 'gb18030', 'latin1']:
+                        try:
+                            raw_data.decode(candidate)
+                            enc = candidate
+                            break
+                        except UnicodeDecodeError:
+                            continue
+                    if enc is None:
+                        raise ValueError("无法识别 CSV 文件编码")
+                    df = pd.read_csv(path, header=header_row-1, encoding=enc)
+                else:
+                    engine = "openpyxl" if ext == ".xlsx" else "xlrd"
+                    df = pd.read_excel(path, sheet_name=sheet, header=header_row-1, engine=engine)
+
+                # 获取原始列名
+                original_cols = list(df.columns)
+                if first_original_cols is None:
+                    first_original_cols = original_cols
+                    first_file_name = os.path.basename(path)
+                else:
+                    if original_cols != first_original_cols:
+                        raise ValueError(f"文件 {os.path.basename(path)} 的列与 {first_file_name} 不一致")
+                dataframes.append(df)
+            except Exception as e:
+                self.status_var.set("合并失败")
+                messagebox.showerror("错误", f"合并失败：{str(e)}")
+                return
+
+        if not dataframes:
+            messagebox.showerror("错误", "没有可合并的数据")
+            return
+
+        # 合并
+        combined_df = pd.concat(dataframes, axis=0, ignore_index=True)
+
+        # 规范化列名（合并后统一处理）
+        self.df, self.columns_info = normalize_columns(combined_df)
+
+        # 更新界面
+        self.file_path = f"合并文件（{len(self.multi_files)}个）"
+        self.is_merged = True
+        self.merged_source_dir = os.path.dirname(self.multi_files[0]["path"])
+        self.sheet_names = ["合并结果"]
+        self.combo_sheet['values'] = self.sheet_names
+        self.combo_sheet.current(0)
+        self.current_sheet = "合并结果"
+        self.combo_sheet.config(state="disabled")
+        self.spin_header.set(1)
+        self.header_row = 1
+
+        # 刷新列列表
+        self.populate_left_listbox()
+        self.selected_indices = []
+        self.populate_right_listbox()
+
+        # 更新导出路径和文件显示
+        self.entry_output.delete(0, tk.END)
+        self.entry_output.insert(0, self.merged_source_dir)
+        self.entry_file.delete(0, tk.END)
+        self.entry_file.insert(0, self.file_path)
+
+        self.status_var.set(f"合并完成，共 {len(combined_df)} 行")
+        messagebox.showinfo("成功", f"合并完成，共 {len(combined_df)} 行数据。")
 
     # ---------- 文件操作 ----------
     def browse_file(self):
@@ -217,7 +456,7 @@ class App:
             self.entry_file.delete(0, tk.END)
             self.entry_file.insert(0, path)
             self.file_path = path
-            # 自动设置默认导出路径为导入文件目录
+            self.is_merged = False
             self.entry_output.delete(0, tk.END)
             self.entry_output.insert(0, os.path.dirname(path))
             self.load_file()
@@ -230,14 +469,18 @@ class App:
 
     def set_output_to_source(self):
         if self.file_path:
-            self.entry_output.delete(0, tk.END)
-            self.entry_output.insert(0, os.path.dirname(self.file_path))
+            if self.is_merged:
+                self.entry_output.delete(0, tk.END)
+                self.entry_output.insert(0, self.merged_source_dir)
+            else:
+                self.entry_output.delete(0, tk.END)
+                self.entry_output.insert(0, os.path.dirname(self.file_path))
         else:
             messagebox.showwarning("提示", "请先导入文件")
 
     # ---------- 数据加载 ----------
     def load_file(self):
-        """加载文件并获取 sheet 列表和初始表头"""
+        """加载单文件"""
         if not self.file_path:
             return
         ext = os.path.splitext(self.file_path)[1].lower()
@@ -252,13 +495,7 @@ class App:
                 self.combo_sheet.config(state="disabled")
                 self.read_headers()
             else:
-                # 读取所有 sheet 名
-                if ext == ".xlsx":
-                    engine = "openpyxl"
-                elif ext == ".xls":
-                    engine = "xlrd"
-                else:
-                    raise ValueError("不支持的文件格式")
+                engine = "openpyxl" if ext == ".xlsx" else "xlrd"
                 xls = pd.ExcelFile(self.file_path, engine=engine)
                 self.sheet_names = xls.sheet_names
                 self.combo_sheet['values'] = self.sheet_names
@@ -275,8 +512,10 @@ class App:
             messagebox.showerror("错误", f"文件加载失败：{str(e)}\n{traceback.format_exc()}")
 
     def read_headers(self):
-        """根据当前 sheet 和表头行读取列信息，刷新左侧列表"""
+        """读取当前 sheet 和表头行，刷新列信息"""
         if not self.file_path:
+            return
+        if self.is_merged:
             return
         try:
             header_row = int(self.spin_header.get())
@@ -292,7 +531,6 @@ class App:
         self.root.update()
         try:
             if ext == ".csv":
-                # 改进的编码检测：读取前 10 行判断
                 raw_data = b""
                 with open(self.file_path, "rb") as f:
                     for _ in range(10):
@@ -319,37 +557,14 @@ class App:
                 self.df = pd.read_excel(self.file_path, sheet_name=self.current_sheet,
                                         header=header_row-1, engine=engine)
 
-            # 检查表头行号是否有效（数据行数至少为 1）
             if len(self.df) == 0:
                 messagebox.showerror("错误", "表头行号超出数据范围或文件无有效数据")
                 self.df = None
                 return
 
-            # 获取列信息
-            raw_names = list(df_head.columns)
-            self.columns_info = []
-            seen = {}
-            for i, raw in enumerate(raw_names):
-                # 处理空列名
-                if pd.isna(raw) or str(raw).strip() == "":
-                    original = ""
-                    base = f"列{i+1}"
-                else:
-                    original = str(raw).strip()
-                    base = original
-                # 处理重复
-                if base in seen:
-                    seen[base] += 1
-                    display = f"{base}_{seen[base]}"
-                else:
-                    seen[base] = 0
-                    display = base
-                excel_letter = get_excel_column_letter(i)
-                self.columns_info.append((i, original, display, excel_letter))
-
-            # 刷新左侧列表
+            # 规范化列名
+            self.df, self.columns_info = normalize_columns(self.df)
             self.populate_left_listbox()
-            # 清空右侧已选列（因为列可能变化）
             self.selected_indices = []
             self.populate_right_listbox()
             self.status_var.set("表头读取完成")
@@ -358,7 +573,6 @@ class App:
             messagebox.showerror("错误", f"读取表头失败：{str(e)}\n{traceback.format_exc()}")
 
     def populate_left_listbox(self, filter_text=""):
-        """刷新左侧列表，支持搜索过滤"""
         self.list_left.delete(0, tk.END)
         filter_lower = filter_text.lower()
         for idx, orig, display, letter in self.columns_info:
@@ -367,11 +581,9 @@ class App:
                 self.list_left.insert(tk.END, show_text)
 
     def filter_left_listbox(self, event=None):
-        text = self.entry_search.get()
-        self.populate_left_listbox(text)
+        self.populate_left_listbox(self.entry_search.get())
 
     def populate_right_listbox(self):
-        """刷新右侧列表，显示当前已选列顺序"""
         self.list_right.delete(0, tk.END)
         for idx in self.selected_indices:
             if 0 <= idx < len(self.columns_info):
@@ -392,14 +604,11 @@ class App:
             self.list_left.selection_set(i)
 
     def add_columns(self):
-        """将左侧选中的列添加到右侧"""
         selected = self.list_left.curselection()
         if not selected:
             messagebox.showinfo("提示", "请先在左侧选择列")
             return
-        # 获取左侧当前显示内容对应的索引（因为过滤后索引可能变化）
         left_items = self.list_left.get(0, tk.END)
-        # 建立显示文本到 column_info 索引的映射
         display_to_index = {}
         for i, (idx, orig, disp, letter) in enumerate(self.columns_info):
             display_to_index[f"{letter} - {disp}"] = idx
@@ -411,12 +620,11 @@ class App:
         self.populate_right_listbox()
 
     def remove_columns(self):
-        """将右侧选中的列移除"""
         selected = self.list_right.curselection()
         if not selected:
             messagebox.showinfo("提示", "请先在右侧选择列")
             return
-        for sel in reversed(selected):  # 从后往前删除
+        for sel in reversed(selected):
             if 0 <= sel < len(self.selected_indices):
                 del self.selected_indices[sel]
         self.populate_right_listbox()
@@ -447,17 +655,18 @@ class App:
 
     # ---------- 事件处理 ----------
     def on_sheet_change(self, event=None):
-        if not self.file_path:
+        if not self.file_path or self.is_merged:
             return
         self.current_sheet = self.combo_sheet.get()
         self.read_headers()
 
     def on_header_change(self, event=None):
+        if not self.file_path or self.is_merged:
+            return
         self.read_headers()
 
     # ---------- 配置管理 ----------
     def load_configs(self):
-        """从配置文件加载所有配置"""
         try:
             if os.path.exists(self.config_file):
                 with open(self.config_file, "r", encoding="utf-8") as f:
@@ -470,7 +679,6 @@ class App:
             self.status_var.set(f"配置文件读取失败：{str(e)}")
 
     def save_configs_to_file(self):
-        """将当前配置列表写入文件"""
         try:
             os.makedirs(self.config_dir, exist_ok=True)
             data = {"configs": self.configs}
@@ -498,35 +706,30 @@ class App:
                 break
 
     def apply_config(self, cfg):
-        """应用配置到界面"""
+        if not self.file_path:
+            messagebox.showwarning("提示", "请先导入文件再应用配置")
+            return
         try:
-            # 1. 设置 sheet（如果存在）
+            # 设置 sheet
             if cfg.get("sheet") in self.sheet_names:
                 self.combo_sheet.set(cfg["sheet"])
                 self.current_sheet = cfg["sheet"]
-            # 2. 设置表头行
+            # 设置表头行
             self.spin_header.set(cfg.get("header_row", 1))
-            # 3. 设置导出路径
+            # 设置导出路径
             self.entry_output.delete(0, tk.END)
             self.entry_output.insert(0, cfg.get("output_dir", ""))
 
-            # 4. 暂存配置中的列信息，待读取表头后匹配
             saved_cols = cfg.get("selected_columns", [])
-
-            # 5. 重新读取表头（会清空 selected_indices，但这是必要的）
             self.read_headers()
-
-            # 6. 根据配置匹配列
             self.selected_indices = []
             for col in saved_cols:
                 idx = col.get("index")
                 matched = False
-                # 优先按索引匹配
                 if idx is not None and 0 <= idx < len(self.columns_info):
                     self.selected_indices.append(idx)
                     matched = True
                 else:
-                    # 索引无效，尝试按列名匹配
                     col_name = col.get("name")
                     for i, (orig_idx, orig_name, disp, letter) in enumerate(self.columns_info):
                         if orig_name == col_name or disp == col_name:
@@ -541,7 +744,6 @@ class App:
             messagebox.showerror("错误", f"应用配置失败：{str(e)}")
 
     def save_config(self):
-        """保存当前配置（覆盖当前选中或另存为）"""
         if not self.file_path:
             messagebox.showwarning("提示", "请先导入文件并选择列")
             return
@@ -549,7 +751,6 @@ class App:
             messagebox.showwarning("提示", "请至少选择一列")
             return
         if self.current_config_name and self.current_config_name in [c["name"] for c in self.configs]:
-            # 覆盖
             for cfg in self.configs:
                 if cfg["name"] == self.current_config_name:
                     self.update_config_dict(cfg)
@@ -561,14 +762,12 @@ class App:
             self.save_config_as()
 
     def save_config_as(self):
-        """另存为新配置"""
         if not self.file_path:
             messagebox.showwarning("提示", "请先导入文件并选择列")
             return
         if not self.selected_indices:
             messagebox.showwarning("提示", "请至少选择一列")
             return
-        # 弹出输入框输入配置名
         name = simpledialog.askstring("保存配置", "请输入配置名称：", parent=self.root)
         if not name:
             return
@@ -586,7 +785,6 @@ class App:
         self.status_var.set(f"配置已保存：{name}")
 
     def update_config_dict(self, cfg):
-        """将当前界面状态写入配置字典"""
         cfg["sheet"] = self.current_sheet or self.combo_sheet.get()
         cfg["header_row"] = int(self.spin_header.get())
         cfg["output_dir"] = self.entry_output.get()
@@ -608,7 +806,6 @@ class App:
             self.configs = [c for c in self.configs if c["name"] != name]
             self.save_configs_to_file()
             self.populate_config_combobox()
-            self.current_config_name = None
             self.status_var.set(f"配置已删除：{name}")
 
     # ---------- 导出 ----------
@@ -624,9 +821,11 @@ class App:
             return
         output_dir = self.entry_output.get().strip()
         if not output_dir:
-            if self.file_path:
-                output_dir = os.path.dirname(self.file_path)
+            if self.is_merged:
+                output_dir = self.merged_source_dir
             else:
+                output_dir = os.path.dirname(self.file_path)
+            if not output_dir:
                 messagebox.showerror("错误", "请指定导出路径")
                 return
         if not os.path.exists(output_dir):
@@ -635,18 +834,19 @@ class App:
             except Exception as e:
                 messagebox.showerror("错误", f"导出路径不存在且无法创建：{str(e)}")
                 return
-        # 生成输出文件名
-        base = os.path.splitext(os.path.basename(self.file_path))[0]
+        # 文件名
+        if self.is_merged:
+            base = "合并结果"
+        else:
+            base = os.path.splitext(os.path.basename(self.file_path))[0]
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = os.path.join(output_dir, f"{base}_筛选结果_{timestamp}.xlsx")
 
         self.status_var.set("正在导出...")
         self.root.update()
         try:
-            # 选择列
             selected_columns = [self.columns_info[i][0] for i in self.selected_indices]
             df_out = self.df.iloc[:, selected_columns].copy()
-            # 输出
             df_out.to_excel(output_file, index=False)
             self.status_var.set(f"导出成功：{output_file}")
             messagebox.showinfo("成功", f"文件已导出至：\n{output_file}")
@@ -658,7 +858,10 @@ class App:
         output_dir = self.entry_output.get().strip()
         if not output_dir:
             if self.file_path:
-                output_dir = os.path.dirname(self.file_path)
+                if self.is_merged:
+                    output_dir = self.merged_source_dir
+                else:
+                    output_dir = os.path.dirname(self.file_path)
             else:
                 messagebox.showwarning("提示", "请先导入文件或指定导出路径")
                 return
