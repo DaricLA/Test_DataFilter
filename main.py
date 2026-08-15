@@ -1,10 +1,9 @@
 import os
 import sys
 import json
-import shutil
 import datetime
 import traceback
-from tkinter import filedialog, messagebox, Tk, Listbox, END, ACTIVE, MULTIPLE
+from tkinter import filedialog, messagebox, simpledialog
 import tkinter as tk
 
 import pandas as pd
@@ -293,17 +292,25 @@ class App:
         self.root.update()
         try:
             if ext == ".csv":
-                # 尝试多种编码
-                df_head = None
-                for enc in ['utf-8-sig', 'gbk', 'gb18030', 'latin1']:
+                # 改进的编码检测：读取前 10 行判断
+                raw_data = b""
+                with open(self.file_path, "rb") as f:
+                    for _ in range(10):
+                        line = f.readline()
+                        if not line:
+                            break
+                        raw_data += line
+                enc = None
+                for candidate in ['utf-8-sig', 'gbk', 'gb18030', 'latin1']:
                     try:
-                        df_head = pd.read_csv(self.file_path, header=header_row-1, nrows=0, encoding=enc)
+                        raw_data.decode(candidate)
+                        enc = candidate
                         break
                     except UnicodeDecodeError:
                         continue
-                if df_head is None:
+                if enc is None:
                     raise ValueError("无法识别 CSV 文件编码")
-                # 读取完整数据
+                df_head = pd.read_csv(self.file_path, header=header_row-1, nrows=0, encoding=enc)
                 self.df = pd.read_csv(self.file_path, header=header_row-1, encoding=enc)
             else:
                 engine = "openpyxl" if ext == ".xlsx" else "xlrd"
@@ -311,6 +318,12 @@ class App:
                                         header=header_row-1, nrows=0, engine=engine)
                 self.df = pd.read_excel(self.file_path, sheet_name=self.current_sheet,
                                         header=header_row-1, engine=engine)
+
+            # 检查表头行号是否有效（数据行数至少为 1）
+            if len(self.df) == 0:
+                messagebox.showerror("错误", "表头行号超出数据范围或文件无有效数据")
+                self.df = None
+                return
 
             # 获取列信息
             raw_names = list(df_head.columns)
@@ -487,28 +500,41 @@ class App:
     def apply_config(self, cfg):
         """应用配置到界面"""
         try:
-            # 设置 sheet
+            # 1. 设置 sheet（如果存在）
             if cfg.get("sheet") in self.sheet_names:
                 self.combo_sheet.set(cfg["sheet"])
                 self.current_sheet = cfg["sheet"]
-            # 设置表头行
+            # 2. 设置表头行
             self.spin_header.set(cfg.get("header_row", 1))
-            # 设置导出路径
+            # 3. 设置导出路径
             self.entry_output.delete(0, tk.END)
             self.entry_output.insert(0, cfg.get("output_dir", ""))
-            # 设置已选列
+
+            # 4. 暂存配置中的列信息，待读取表头后匹配
+            saved_cols = cfg.get("selected_columns", [])
+
+            # 5. 重新读取表头（会清空 selected_indices，但这是必要的）
+            self.read_headers()
+
+            # 6. 根据配置匹配列
             self.selected_indices = []
-            for col in cfg.get("selected_columns", []):
+            for col in saved_cols:
                 idx = col.get("index")
+                matched = False
+                # 优先按索引匹配
                 if idx is not None and 0 <= idx < len(self.columns_info):
                     self.selected_indices.append(idx)
+                    matched = True
                 else:
-                    # 尝试按列名匹配
+                    # 索引无效，尝试按列名匹配
                     col_name = col.get("name")
                     for i, (orig_idx, orig_name, disp, letter) in enumerate(self.columns_info):
                         if orig_name == col_name or disp == col_name:
                             self.selected_indices.append(i)
+                            matched = True
                             break
+                if not matched:
+                    print(f"警告：配置中的列 '{col.get('name', '')}' 在当前数据中未找到")
             self.populate_right_listbox()
             self.status_var.set(f"已应用配置：{cfg['name']}")
         except Exception as e:
@@ -543,7 +569,6 @@ class App:
             messagebox.showwarning("提示", "请至少选择一列")
             return
         # 弹出输入框输入配置名
-        from tkinter import simpledialog
         name = simpledialog.askstring("保存配置", "请输入配置名称：", parent=self.root)
         if not name:
             return
@@ -594,6 +619,9 @@ class App:
         if not self.selected_indices:
             messagebox.showwarning("提示", "请至少选择一列")
             return
+        if self.df is None:
+            messagebox.showerror("错误", "数据未加载，请重新导入文件")
+            return
         output_dir = self.entry_output.get().strip()
         if not output_dir:
             if self.file_path:
@@ -615,12 +643,6 @@ class App:
         self.status_var.set("正在导出...")
         self.root.update()
         try:
-            # 获取完整数据
-            if self.df is None:
-                # 重新读取
-                self.read_headers()
-                if self.df is None:
-                    raise ValueError("数据未加载")
             # 选择列
             selected_columns = [self.columns_info[i][0] for i in self.selected_indices]
             df_out = self.df.iloc[:, selected_columns].copy()
